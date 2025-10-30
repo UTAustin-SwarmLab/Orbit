@@ -55,6 +55,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include per-camera object lists for each sample (uses camera frustum and image bounds).",
     )
+    parser.add_argument(
+        "--skip-categories",
+        default="",
+        help=(
+            "Comma-separated category names to exclude from output (e.g., movable_object.barrier,vehicle.trafficcone)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -97,22 +104,23 @@ CAMS = [
 ]
 
 
-def per_camera_objects(nusc: "NuScenes", sample: Dict[str, Any], include_fields_fn) -> Dict[str, List[Dict[str, Any]]]:
+def per_camera_objects(nusc: "NuScenes", sample: Dict[str, Any], skip: set) -> Dict[str, List[str]]:
     cam_to_sd = {c: sample["data"][c] for c in CAMS if c in sample["data"]}
     ann_tokens = set(sample["anns"])
-    per_cam: Dict[str, List[Dict[str, Any]]] = {}
+    per_cam: Dict[str, List[str]] = {}
     for cam, sd_tk in cam_to_sd.items():
         _, boxes, _ = nusc.get_sample_data(
             sd_tk,
             box_vis_level=BoxVisibility.ANY,
             selected_anntokens=list(ann_tokens),
         )
-        per_cam[cam] = [include_fields_fn(nusc.get("sample_annotation", b.token)) for b in boxes]
+        cats = [nusc.get("sample_annotation", b.token)["category_name"] for b in boxes]
+        per_cam[cam] = [c for c in cats if c not in skip]
     return per_cam
 
 
 def extract_per_frame_objects(
-    dataroot: str, version: str, scene_names: List[str], per_camera: bool = False
+    dataroot: str, version: str, scene_names: List[str], per_camera: bool = False, skip: set | None = None
 ) -> Iterable[Dict[str, Any]]:
     if NuScenes is None:
         raise RuntimeError("nuscenes-devkit is not installed. Install with: pip install nuscenes-devkit")
@@ -126,35 +134,28 @@ def extract_per_frame_objects(
     else:
         scenes = list(nusc.scene)
 
+    skip = skip or set()
+
     for scene in scenes:
         for sample in iter_samples_for_scene(nusc, scene):
-            objects = []
-
-            def include_ann_fields(ann: Dict[str, Any]) -> Dict[str, Any]:
-                return {
-                    "token": ann["token"],
-                    "instance_token": ann["instance_token"],
-                    "category_name": ann["category_name"],
-                    "visibility_token": ann["visibility_token"],
-                    "size": ann["size"],
-                    "translation": ann["translation"],
-                    "rotation": ann["rotation"],
-                    "attribute_tokens": ann["attribute_tokens"],
-                }
-
-            for ann_token in sample["anns"]:
-                ann = nusc.get("sample_annotation", ann_token)
-                objects.append(include_ann_fields(ann))
-
-            record = {
-                "scene": scene["name"],
-                "sample_token": sample["token"],
-                "timestamp": sample["timestamp"],
-                "objects": objects,
-            }
-
             if per_camera:
-                record["per_camera"] = per_camera_objects(nusc, sample, include_ann_fields)
+                per_cam = per_camera_objects(nusc, sample, skip)
+                # Nest as: scene -> camera -> timestamp -> [category_names]
+                record = {
+                    "scene": scene["name"],
+                    "camera": {cam: {str(sample["timestamp"]): cats} for cam, cats in per_cam.items()},
+                }
+            else:
+                # Minimal per-sample list of category names (no camera breakdown)
+                category_names = [
+                    nusc.get("sample_annotation", ann_token)["category_name"] for ann_token in sample["anns"]
+                ]
+                category_names = [c for c in category_names if c not in skip]
+                record = {
+                    "scene": scene["name"],
+                    "timestamp": sample["timestamp"],
+                    "object_category_names": category_names,
+                }
 
             yield record
 
@@ -162,21 +163,41 @@ def extract_per_frame_objects(
 def main() -> None:
     args = parse_args()
     scene_names = load_scene_names(args.scenes, args.scenes_file)
+    skip = set(s.strip() for s in args.skip_categories.split(",") if s.strip())
     if args.pretty:
-        data = list(extract_per_frame_objects(args.dataroot, args.version, scene_names, per_camera=args.per_camera))
+        if args.per_camera:
+            # Aggregate into {scene_id: {CAM: {timestamp: [categories]}}}
+            aggregated: Dict[str, Dict[str, Dict[str, List[str]]]] = {}
+            for record in extract_per_frame_objects(
+                args.dataroot, args.version, scene_names, per_camera=True, skip=skip
+            ):
+                scene_id = record["scene"]
+                cam_map = record["camera"]
+                if scene_id not in aggregated:
+                    aggregated[scene_id] = {}
+                for cam, ts_map in cam_map.items():
+                    if cam not in aggregated[scene_id]:
+                        aggregated[scene_id][cam] = {}
+                    for ts, cats in ts_map.items():
+                        aggregated[scene_id][cam][ts] = cats
+            data_obj = aggregated
+        else:
+            data_obj = list(
+                extract_per_frame_objects(args.dataroot, args.version, scene_names, per_camera=False, skip=skip)
+            )
         if args.output:
             with open(args.output, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+                json.dump(data_obj, f, indent=2)
                 f.write("\n")
         else:
-            json.dump(data, sys.stdout, indent=2)
+            json.dump(data_obj, sys.stdout, indent=2)
             sys.stdout.write("\n")
             sys.stdout.flush()
     else:
         handle = open(args.output, "w", encoding="utf-8") if args.output else sys.stdout
         try:
             for record in extract_per_frame_objects(
-                args.dataroot, args.version, scene_names, per_camera=args.per_camera
+                args.dataroot, args.version, scene_names, per_camera=args.per_camera, skip=skip
             ):
                 handle.write(json.dumps(record) + "\n")
             handle.flush()

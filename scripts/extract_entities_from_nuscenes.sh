@@ -19,4 +19,5 @@ python extract_entities_from_nuscenes.py \
   --scenes scene-0061 \
   --output scene-0061.json \
   --pretty \
-  --per-camera
+  --per-camera \
+  --skip-categories movable_object.barrier
