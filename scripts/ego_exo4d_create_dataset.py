@@ -12,7 +12,7 @@ DATASET_PATH = "/nas/mars/dataset/Ego-Exo4D"
 NARRATIONS_PATH = "outputs/ego_exo4d_narrations.json"
 VQA_FIRST_PASS_PATH = "outputs/ego_exo4d_vqa_1.json"
 VQA_SECOND_PASS_PATH = "outputs/ego_exo4d_vqa_2.json"
-VQA_FINAL_DATASET_PATH = "outputs/ego_exo4d_narrations.json"
+VQA_FINAL_DATASET_PATH = "outputs/ego_exo4d_dataset.json"
 NUM_PER_CATEGORY = 6
 
 def create_prompt_0(narrations):
@@ -208,14 +208,16 @@ def check_with_reprompt():
         narrations_data = json.load(f)
     
     good_questions = {}
-    for key in tqdm.tqdm(narrations_data):
+    bar = tqdm.tqdm(narrations_data)
+    for key in bar:
         narrations = narrations_data[key]["narrations"]
         question_strings = questions_data[key].split("\n\n")
 
         parsed_questions = []
         for q_str in question_strings:
             parts = q_str.strip().split("Correct Answer:")
-            parsed_questions.append((parts[0].strip(), parts[1].strip()))
+            if len(parts) == 2:
+                parsed_questions.append((parts[0].strip(), parts[1].strip()))
 
         possible_choices = []
         for question, correct_answer in parsed_questions:
@@ -227,6 +229,7 @@ def check_with_reprompt():
             if correct_answer == llm_output:
                 possible_choices.append((question, correct_answer))
         good_questions[key] = possible_choices
+        bar.set_description(f"({len(possible_choices)}/{len(question_strings)})")
 
     with open(VQA_SECOND_PASS_PATH, "w") as f:
         json.dump(good_questions, f, indent=4)
@@ -239,13 +242,13 @@ def output_final_json():
 
     final_output = {}
     for key in narrations_data:
-        qa_pair = random.choice(questions_data[key])
-        final_output[key] = {
-            "video_paths": narrations_data[key]["video_paths"],
-            "narrations": narrations_data[key]["narrations"],
-            "question": qa_pair[0],
-            "correct_answer": qa_pair[1]
-        }
+        if questions_data[key] != []:
+            qa_pair = random.choice(questions_data[key])
+            final_output[key] = {
+                "video_paths": narrations_data[key]["video_paths"],
+                "question": qa_pair[0][3:],
+                "correct_answer": qa_pair[1]
+            }
     with open(VQA_FINAL_DATASET_PATH, "w") as f:
         json.dump(final_output, f, indent=4)
 
