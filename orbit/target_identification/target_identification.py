@@ -79,8 +79,8 @@ def identify_target(question, candidates, specification, conversation_history):
         history = json.load(f)
     llm = LLM(
         system_prompt=None,
-        save_dir="outputs/3_target_identification/longvideobench",
-        model="o1-mini-2024-09-12",
+        save_dir="/nas/mars/experiment_result/orbit/0_llm_conversation_history",
+        model="o4-mini",
         history=history,
     )
 

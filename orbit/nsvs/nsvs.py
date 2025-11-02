@@ -1,6 +1,6 @@
-from enum import auto
 import numpy as np
 import warnings
+import bisect
 import tqdm
 import os
 
@@ -10,15 +10,16 @@ from orbit.nsvs.video.frames_of_interest import FramesofInterest
 from orbit.utils.intersection import intersection_with_gaps
 from orbit.nsvs.video.video_frame import VideoFrame
 from orbit.nsvs.vlm.vllm_client import VLLMClient
-from orbit.nsvs.vlm.internvl import InternVL
 
 
 PRINT_ALL = False
 warnings.filterwarnings("ignore")
 
+from orbit.nsvs.vlm.obj import DetectedObject
+
 def run_nsvs(
-    video_data: dict,
-    video_path: str,
+    multi_video_data: list,
+    video_paths: list,
     proposition: list,
     specification: str,
     model_name: str,
@@ -28,14 +29,14 @@ def run_nsvs(
     tl_satisfaction_threshold: float = 0.6,
     detection_threshold: float = 0.5,
     vlm_detection_threshold: float = 0.349,
-    image_output_dir: str = "output"
+    image_output_dir: str = "outputs"
 ):
     """Find relevant frames from a video that satisfy a specification"""
 
     if PRINT_ALL:
-        print(f"Propositions: {proposition}\n")
-        print(f"Specification: {specification}\n")
-        print(f"Video path: {video_path}\n")
+        print(f"\nPropositions: {proposition}")
+        print(f"Specification: {specification}")
+        print(f"Video path: {video_paths}\n")
 
     vlm = VLLMClient(model=model_name, api_base=f"http://localhost:800{device}/v1")
 
@@ -50,31 +51,45 @@ def run_nsvs(
         detection_threshold=detection_threshold
     )
 
-    frame_step = int(round(video_data["video_info"]["fps"] / video_data["sample_rate"]))
+    frame_step = int(round(multi_video_data[0]["video_info"]["fps"] / multi_video_data[0]["sample_rate"])) # since they are identical, take from [0]
     frame_of_interest = FramesofInterest(num_of_frame_in_sequence, frame_step)
 
-    frames = video_data["images"]
+    multi_frames = [video_data["images"] for video_data in multi_video_data]
 
     frame_windows = []
-    for i in range(0, len(frames), num_of_frame_in_sequence):
-        frame_windows.append(frames[i : i + num_of_frame_in_sequence])
+    for i in range(0, len(multi_frames[0]), num_of_frame_in_sequence): # these are established to be the same length
+        frame_windows.append([frames[i : i + num_of_frame_in_sequence] for frames in multi_frames])
+    if PRINT_ALL:
+        print(f"{len(frame_windows)} frame windows to process")
+        print(f"{len(frame_windows[0])} cameras per frame window")
+        print(f"{len(frame_windows[0][0])} frames per camera per window")
+        print(f"{frame_windows[0][0][0].shape} shape of each frame")
 
-    def process_frame(sequence_of_frames: list[np.ndarray], frame_count: int):
+    def process_frame(multi_sequence_of_frames: list[list[np.ndarray]], frame_count: int):
         object_of_interest = {}
+        frame_images = {f"cam{i}": seq for i, seq in enumerate(multi_sequence_of_frames)}
 
         for prop in proposition:
-            detected_object = vlm.detect(
-                seq_of_frames=sequence_of_frames,
-                scene_description=prop,
-                threshold=vlm_detection_threshold
-            )
-            object_of_interest[prop] = detected_object
-            if PRINT_ALL and detected_object.is_detected:
-                print(f"\t{prop}: {detected_object.confidence}->{detected_object.probability}")
+            best_detection = (None, DetectedObject(name=prop, is_detected=False, confidence=0.0, probability=0.0))
 
+            for cam_id, sequence_of_frames in frame_images.items():
+                detected_object = vlm.detect(
+                    seq_of_frames=sequence_of_frames,
+                    scene_description=prop,
+                    threshold=vlm_detection_threshold
+                )
+                if detected_object.confidence > best_detection[1].confidence:
+                    best_detection = (cam_id, detected_object)
+
+            object_of_interest[prop] = best_detection
+            if PRINT_ALL and best_detection[1].is_detected:
+                print(f"\t{prop} ({best_detection[0]}): {best_detection[1].confidence}->{best_detection[1].probability}")
+
+        # print(frame_images.keys(), len(frame_images.values()))
+        # print(object_of_interest)
         frame = VideoFrame(
             frame_idx=frame_count,
-            frame_images=sequence_of_frames,
+            frame_images=frame_images,
             object_of_interest=object_of_interest,
         )
         return frame
@@ -84,24 +99,24 @@ def run_nsvs(
     else:
         looper = tqdm.tqdm(enumerate(frame_windows), total=len(frame_windows))
 
-    all_detections = [[], []]
-    for i, sequence_of_frames in looper:
+    all_detections = [set(), set()]
+    for i, multi_sequence_of_frames in looper:
         if PRINT_ALL:
             print("\n" + "*"*50 + f" {i}/{len(frame_windows)-1} " + "*"*50)
-            print("Detections:")
-        frame = process_frame(sequence_of_frames, i)
-        if PRINT_ALL and False: # disabled
+            print(f"Detections:")
+        frame = process_frame(multi_sequence_of_frames, i)
+        if PRINT_ALL: # disabled
             os.makedirs(image_output_dir, exist_ok=True)
             frame.save_frame_img(save_path=os.path.join(image_output_dir, f"{i}"))
 
         if checker.validate_frame(frame_of_interest=frame):
             thresh = frame.thresholded_detected_objects(threshold=detection_threshold)
-            for prop in thresh.keys():
+            for prop, (prob, cam_id) in thresh.items():
                 split = checker.check_split(prop)
-                if frame.frame_idx not in all_detections[split]:
-                    all_detections[split].append(frame.frame_idx)
+                if ((frame.frame_idx, cam_id) not in all_detections[split]):
+                    all_detections[split].add((frame.frame_idx, cam_id))
             if PRINT_ALL:
-                print(f"\t{all_detections}")
+                print(f"\t{[sorted(s) for s in all_detections]}")
 
             automaton.add_frame(frame=frame)
             frame_of_interest.frame_buffer.append(frame)
@@ -115,26 +130,35 @@ def run_nsvs(
         print()
         print(f"Automaton indices: {automaton_foi}")
 
-    # if not automaton_foi or not any(len(x) > 0 for x in all_detections):
     if not automaton_foi: # automaton empty or nothing detected
-        foi = [-1]
+        foi = {-1: {}}
     else:
-        detections_foi = [x * num_of_frame_in_sequence * frame_step for x in intersection_with_gaps(all_detections)]
-        detections_foi = list(range(int(min(detections_foi)), int(max(detections_foi)) + 1))
-        if PRINT_ALL:
-            print(f"Detection indices: {detections_foi}")
+        detections_with_cams = intersection_with_gaps(all_detections)
+        if detections_with_cams:
+            scaled_detections = {k * num_of_frame_in_sequence * frame_step: v for k, v in detections_with_cams.items()}
+            min_frame = min(scaled_detections.keys())
+            max_frame = max(scaled_detections.keys())
+            detections_foi = list(range(int(min_frame), int(max_frame) + 1))
 
-        foi = list(set(automaton_foi) & set(detections_foi)) # set intersection
-        if len(foi) == 0:
-            foi = [-1]
+            if PRINT_ALL:
+                print(f"Detection indices: {detections_foi}")
+
+            intersecting_indices = sorted(set(automaton_foi) & set(detections_foi))
+
+            if not intersecting_indices:
+                foi = {-1: {}}
+            else:
+                start_frames = sorted(scaled_detections.keys())
+                foi = {
+                    frame: scaled_detections[start_frames[bisect.bisect_right(start_frames, frame) - 1]] for frame in intersecting_indices
+                }
         else:
-            foi = [min(foi), max(foi)]
+            foi = {-1: {}}
 
         if PRINT_ALL:
             print("\n" + "-"*107)
             print(f"All Detections: {all_detections}")
-            print("Detected frames of interest:")
-            print(foi)
+            print(f"Detected frames of interest:\n{foi}")
 
     return foi, all_detections
 

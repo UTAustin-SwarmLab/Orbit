@@ -8,6 +8,7 @@ class VideoState:
         label: str,
         proposition_set: list[str],
         probability: float = 1.0,
+        cam_ids: list[str] = None
     ) -> None:
         """State class.
 
@@ -18,6 +19,7 @@ class VideoState:
                 indicating True or False
             proposition_set (list[str]): Proposition set.
             probability (float): Probability of the state.
+            cam_ids (list[str]): Camera IDs.
         """
         self.state_index = state_index
         self.frame_index = frame_index
@@ -25,10 +27,11 @@ class VideoState:
         self.label = label  # "init", "terminal", TTT, TFT, FTT, etc.
         self.descriptive_label = self._get_descriptive_label(label=label)
         self.probability = probability
+        self.cam_ids = cam_ids if cam_ids is not None else []
 
     def __repr__(self) -> str:
         """Representation of state."""
-        return f"{self.frame_index}|{self.state_index} ({self.probability}): {self.label}"
+        return f"{self.frame_index}|{self.state_index} ({self.probability}): {self.label} @ {self.cam_ids}"
 
     def __str__(self) -> str:
         """String of state."""
@@ -51,17 +54,19 @@ class VideoState:
                     labels.append(self.proposition_set[i])
         return labels
 
-    def update(self, frame_index: int, target_label: str) -> None:
+    def update(self, frame_index: int, target_label: str, cam_ids: list[str]) -> None:
         """Update state to the new state..
 
         Args:
             frame_index (int): Frame index.
             target_label (str): Target label for the new state.
+            cam_ids (list[str]): Camera IDs.
         """
         self.frame_index = frame_index
         self.label = target_label  # TTT, TFT, FTT, etc.
         self.descriptive_label = self._get_descriptive_label(label=target_label)
         self.probability = 1.0
+        self.cam_ids = cam_ids
 
     def compute_probability(self, probabilities: list[list[float]]) -> None:
         """Compute probability of the state given the probabilities of the propositions.

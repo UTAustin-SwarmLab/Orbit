@@ -16,5 +16,7 @@ class FramesofInterest:
                 for j in range(total_step)
             ])
             self.frame_buffer = []
+
     def compile_foi(self):
         return [i for sub in self.foi_list for i in sub]
+        

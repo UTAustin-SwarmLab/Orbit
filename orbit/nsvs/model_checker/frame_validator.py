@@ -45,7 +45,7 @@ class FrameValidator:
         not_props = self.symbolic_verification_rule.get(SymbolicFilterRule.NOT_PROPS)
         if not_props:
             for prop in frame.object_of_interest.keys():
-                if frame.object_of_interest[prop].get_detected_probability() >= self.threshold_of_probability and prop in not_props: # detected but also in not_props
+                if frame.object_of_interest[prop][1].get_detected_probability() >= self.threshold_of_probability and prop in not_props: # detected but also in not_props
                     return False
 
         or_props = self.symbolic_verification_rule.get(SymbolicFilterRule.OR_PROPS)
@@ -53,7 +53,7 @@ class FrameValidator:
             or_group_satisfied = False
             for group in or_props:
                 for prop in group:
-                    if frame.object_of_interest[prop].get_detected_probability() >= self.threshold_of_probability:
+                    if frame.object_of_interest[prop][1].get_detected_probability() >= self.threshold_of_probability:
                         or_group_satisfied = True
                         break
                 if or_group_satisfied:
@@ -68,7 +68,7 @@ class FrameValidator:
                 total = 0
                 for prop in group:
                     total += 1
-                    if frame.object_of_interest[prop].get_detected_probability() < self.threshold_of_probability:
+                    if frame.object_of_interest[prop][1].get_detected_probability() < self.threshold_of_probability:
                         bad += 1
                 if total > 2 * bad:
                     return True

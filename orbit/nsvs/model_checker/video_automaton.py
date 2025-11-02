@@ -48,16 +48,26 @@ class VideoAutomaton:
         current_states = []
         for prop_comb in self.label_combinations:
             # iterate through all possible combinations of T and F
+            cam_ids = []
+            for i, prop_char in enumerate(prop_comb):
+                if prop_char == 'T':
+                    prop = self.proposition_set[i]
+                    if prop in frame.object_of_interest:
+                        cam_id, _ = frame.object_of_interest[prop]
+                        cam_ids.append(cam_id)
+
             self._current_state = VideoState(
                 state_index=len(self.states),
                 frame_index=self.frame_index_in_automaton,
                 label=prop_comb,
                 proposition_set=self.proposition_set,
+                cam_ids=cam_ids
             )
             # TODO: Make a method for update and compute probability
             self._current_state.update(
                 frame_index=self.frame_index_in_automaton,
                 target_label=prop_comb,
+                cam_ids=cam_ids
             )
             self._current_state.compute_probability(probabilities=self.probability_of_propositions)
             if self._current_state.probability > 0:
@@ -113,11 +123,13 @@ class VideoAutomaton:
         """Update the probability of propositions."""
         for i, prop in enumerate(self.proposition_set):
             if frame.object_of_interest.get(prop):
-                probability = frame.object_of_interest[prop].get_detected_probability()
+                cam_id, detected_object = frame.object_of_interest[prop]
+                probability = detected_object.get_detected_probability()
             else:
                 prop = prop.replace("_", " ")
                 if frame.object_of_interest.get(prop):
-                    probability = frame.object_of_interest[prop].get_detected_probability()
+                    cam_id, detected_object = frame.object_of_interest[prop]
+                    probability = detected_object.get_detected_probability()
                 else:
                     probability = 0
             self.probability_of_propositions[i].append(round(float(probability), 2))

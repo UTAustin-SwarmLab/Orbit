@@ -1,6 +1,8 @@
 from typing import List
 import numpy as np
+import tqdm
 import cv2
+import os
 
 
 class Mp4Reader():
@@ -23,8 +25,6 @@ class Mp4Reader():
 
     def read_video(self):
         cap = cv2.VideoCapture(self.path)
-        if not cap.isOpened():
-            return None
 
         fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
@@ -34,7 +34,7 @@ class Mp4Reader():
         frame_idxs = self._sampled_frame_indices(fps, frame_count)
 
         images: List[np.ndarray] = []
-        for idx in frame_idxs:
+        for idx in tqdm.tqdm(frame_idxs, desc=f"Reading video {os.path.basename(self.path)}"):
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ok, frame_bgr = cap.read()
             if not ok or frame_bgr is None:

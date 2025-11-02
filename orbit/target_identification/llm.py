@@ -5,7 +5,7 @@ from openai import OpenAI
 
 
 class LLM:
-    def __init__(self, system_prompt, save_dir, model="o1-mini-2024-09-12", history=None):
+    def __init__(self, system_prompt, save_dir, model="o4-mini", history=None):
         """
         Initializes the LLM with a system prompt and optional conversation history.
 

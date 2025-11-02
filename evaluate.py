@@ -1,14 +1,14 @@
 from orbit.target_identification.target_identification import *
 from orbit.nsvs.model_checker.frame_validator import *
-from orbit.datamanager.longvideobench import *
 from orbit.nsvs.video.read_video import *
-from orbit.datamanager.cinepile import *
+from orbit.datamanager.egoexo4d import *
 from orbit.nsvs.vlm.obj import *
 from orbit.nsvs.nsvs import *
 from orbit.puls.puls import *
 
 import json
 import os
+import re
 
 def exec_puls(entry): # Step 1
     output = PULS(entry["question"])
@@ -32,16 +32,31 @@ def exec_target_identification(entry): # Step 2
     entry["target_identification"]["conversation_history"] = os.path.join(os.getcwd(), output["saved_path"])
 
 def exec_nsvs(entry, sample_rate, device, model_name): # Step 3
-    print(entry["paths"]["video_path"])
-    reader = Mp4Reader(path=entry["paths"]["video_path"], sample_rate=sample_rate)
-    video_data = reader.read_video()
-    entry["metadata"]["fps"] = video_data["video_info"]["fps"]
-    entry["metadata"]["frame_count"] = video_data["video_info"]["frame_count"]
+    multi_video_data = []
+    for video_path in entry["video_paths"]:
+        reader = Mp4Reader(path=video_path, sample_rate=sample_rate)
+        multi_video_data.append(reader.read_video())
 
+    fps = set([video_data["video_info"]["fps"] for video_data in multi_video_data])
+    frame_count = set([video_data["video_info"]["frame_count"] for video_data in multi_video_data])
+    num_images = set([len(video_data["images"]) for video_data in multi_video_data])
+
+    entry["metadata"] = {}
     try:
+        if len(fps) == 1 and len(frame_count) == 1 and len(num_images) == 1:
+            entry["metadata"]["fps"] = fps.pop()
+            entry["metadata"]["frame_count"] = frame_count.pop()
+        else:
+            errors = [
+                f"Different FPS values found: {fps}" if len(fps) != 1 else None,
+                f"Different frame counts found: {frame_count}" if len(frame_count) != 1 else None,
+                f"Different number of images found: {num_images}" if len(num_images) != 1 else None
+            ]
+            raise ValueError(" ; ".join(filter(None, errors)))
+
         output, indices = run_nsvs(
-            video_data,
-            entry["paths"]["video_path"],
+            multi_video_data,
+            entry["video_paths"],
             entry["puls"]["proposition"],
             entry["puls"]["specification"],
             device=device,
@@ -49,12 +64,13 @@ def exec_nsvs(entry, sample_rate, device, model_name): # Step 3
         )
     except Exception as e:
         entry["metadata"]["error"] = repr(e)
-        output = [-1]
+        print(repr(e))
+        output = {-1: {}}
         indices = []
     
     entry["nsvs"] = {}
     entry["nsvs"]["output"] = output
-    entry["nsvs"]["indices"] = indices
+    entry["nsvs"]["indices"] = [list(idx) for idx in indices]
 
 def exec_merge(entry): # Step 4
     inner = entry["target_identification"]["frame_window"].strip()[1:-1]
@@ -69,45 +85,61 @@ def exec_merge(entry): # Step 4
         else:
             result.append(0)
 
-    if entry["nsvs"]["output"] != [-1]:
-        entry["frames_of_interest"] = [
-            max(0,                                  int(entry["nsvs"]["output"][0] + result[0] * entry["metadata"]["fps"])),
-            min(entry["metadata"]["frame_count"]-1, int(entry["nsvs"]["output"][1] + result[1] * entry["metadata"]["fps"]))
-        ]
-    else:
-        entry["frames_of_interest"] = [-1]
+    if entry["nsvs"]["output"] != {-1: {}}:
+        min_frame_nsvs = min(entry["nsvs"]["output"].keys())
+        max_frame_nsvs = max(entry["nsvs"]["output"].keys())
 
-def run_orbit(output_dir):
-    loader = LongVideoBench()
-    # loader = CinePile()
+        start_offset_frames = result[0] * entry["metadata"]["fps"]
+        end_offset_frames = result[1] * entry["metadata"]["fps"]
+        all_camera_ids = [f"cam{i}" for i in range(len(entry["video_paths"]))]
+
+        frames_of_interest = {}
+        if start_offset_frames < 0:
+            start_ext = max(0, int(min_frame_nsvs + start_offset_frames))
+            for frame_num in range(start_ext, min_frame_nsvs):
+                frames_of_interest[frame_num] = all_camera_ids
+        for k, v in entry["nsvs"]["output"].items():
+            frames_of_interest[k] = v
+        if end_offset_frames > 0:
+            end_ext = min(entry["metadata"]["frame_count"] - 1, int(max_frame_nsvs + end_offset_frames))
+            for frame_num in range(max_frame_nsvs + 1, end_ext + 1):
+                frames_of_interest[frame_num] = all_camera_ids
+        
+        entry["frames_of_interest"] = frames_of_interest
+    else:
+        entry["frames_of_interest"] = {-1: {}}
+
+def run_orbit(output_dir, device_number, current_split, total_splits):
+    loader = EgoExo4D()
     data = loader.load_data()
     
     output = []
 
-    starting = 0
-    ending = len(data)-1
-    for i in range(starting, ending+1):
+    starting = (len(data) * (current_split-1)) // total_splits
+    ending = (len(data) * current_split) // total_splits
+    for i in range(starting, ending):
         print("\n" + "*"*50 + f" {i}/{len(data)-1} " + "*"*50)
         entry = data[i]
         exec_puls(entry)
         exec_target_identification(entry)
-        exec_nsvs(entry, sample_rate=1, device=0, model_name="OpenGVLab/InternVL2_5-8B")
+        exec_nsvs(entry, sample_rate=1, device=device_number, model_name="Qwen/Qwen2.5-VL-7B-Instruct")
         exec_merge(entry)
         output.append(entry)
-        # with open(f"junk/{i}.json", "w") as f:
-        #     json.dump(output, f, indent=4)
 
     with open(output_dir, "w") as f:
         json.dump(output, f, indent=4)
 
 def postprocess(output_dir):
-    loader = LongVideoBench()
+    loader = EgoExo4D()
     loader.postprocess_data(output_dir)
 
 def main():
-    output_dir = "/nas/mars/experiment_result/nsvqa/5_full_output/longvideobench_rebuttal_1.json"
-    run_orbit(output_dir)
-    postprocess(output_dir)
+    current_split = 3
+    total_splits = 3
+    device_number = current_split
+    output_dir = f"/nas/mars/experiment_result/orbit/2_full_output/ego_exo4d_{current_split}.json"
+    run_orbit(output_dir, device_number, current_split, total_splits)
+    # postprocess(output_dir)
 
 if __name__ == "__main__":
     main()

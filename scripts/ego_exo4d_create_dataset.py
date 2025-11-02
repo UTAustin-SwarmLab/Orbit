@@ -112,7 +112,7 @@ def get_unique_video_types():
     videos_path = os.path.join(DATASET_PATH, "takes")
     all_entries = os.listdir(videos_path)
     dir_names = [d for d in all_entries if os.path.isdir(os.path.join(videos_path, d))]
-    category_names = [re.split(r'[_]?\d+', d)[0] for d in dir_names]
+    category_names = [re.split(r"[_]?\d+", d)[0] for d in dir_names]
     unique_categories = sorted(list(set(category_names)))
     return unique_categories
 
@@ -169,8 +169,8 @@ def create_narrations():
                     narrations = narrations_map[uid][0]["descriptions"]
                     modified_narrations = []
                     for narration in narrations:
-                        modified_text = re.sub(r'\bC\b', 'Camera Wearer', narration["text"])
-                        modified_text = re.sub(r'\bO\b', 'Other Person', modified_text)
+                        modified_text = re.sub(r"\bC\b", "Camera Wearer", narration["text"])
+                        modified_text = re.sub(r"\bO\b", "Other Person", modified_text)
                         modified_narrations.append(modified_text)
                     main_dict[video] = {
                         "video_paths": sorted(mp4_files),
@@ -244,21 +244,25 @@ def output_final_json():
     for key in narrations_data:
         if questions_data[key] != []:
             qa_pair = random.choice(questions_data[key])
+            question_candidates = qa_pair[0][3:].split("\n")
+            question = question_candidates[0].strip()
+            candidates = [c.strip() for c in question_candidates[1:]]
             final_output[key] = {
                 "video_paths": narrations_data[key]["video_paths"],
-                "question": qa_pair[0][3:],
+                "question": question,
+                "candidates": candidates,
                 "correct_answer": qa_pair[1]
             }
     with open(VQA_FINAL_DATASET_PATH, "w") as f:
         json.dump(final_output, f, indent=4)
 
 def main():
-    print("--- Creating Narrations ---")
-    create_narrations()
-    print("\n--- Parsing through OpenAI ---")
-    parse_through_openai()
-    print("\n--- Checking with Reprompt ---")
-    check_with_reprompt()
+    # print("--- Creating Narrations ---")
+    # create_narrations()
+    # print("\n--- Parsing through OpenAI ---")
+    # parse_through_openai()
+    # print("\n--- Checking with Reprompt ---")
+    # check_with_reprompt()
     print("\n--- Outputting Final JSON ---")
     output_final_json()
 

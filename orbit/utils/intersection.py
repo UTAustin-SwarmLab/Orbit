@@ -22,18 +22,35 @@ def group_with_gaps(nums, max_gaps=2):
     groups.append(current_group)
     return groups
 
-def intersection_with_gaps(indices, max_gaps=8): # smart set intersection
+def intersection_with_gaps(indices, max_gaps=1):
     if len(non_empty := [s for s in indices if s]) == 1:
-        return non_empty[0]
+        frame_indices = [idx for idx, cam in non_empty[0]]
+        groups = group_with_gaps(frame_indices, max_gaps)
+        largest_set = max(groups, key=len) if groups else []
+        result = {}
+        for frame_idx in largest_set:
+            result[frame_idx] = [cam for idx, cam in non_empty[0] if idx == frame_idx]
+        return result
 
-    A = set(indices[0])
-    B = set(indices[1])
-    combined = sorted(A | B)
+    set_A, set_B = indices[0], indices[1]
+    frame_indices_A = {idx for idx, cam in set_A}
+    frame_indices_B = {idx for idx, cam in set_B}
+    combined = sorted(list(frame_indices_A | frame_indices_B))
 
     largest_set = []
     for group in group_with_gaps(combined, max_gaps):
         if len(group) > len(largest_set):
             largest_set = group
 
-    return largest_set
+    result = {}
+    for frame_idx in largest_set:
+        cams = []
+        for idx, cam in set_A:
+            if idx == frame_idx:
+                cams.append(cam)
+        for idx, cam in set_B:
+            if idx == frame_idx:
+                cams.append(cam)
+        result[frame_idx] = list(set(cams))
+    return result
 

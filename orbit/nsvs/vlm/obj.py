@@ -18,8 +18,8 @@ class DetectedObject:
         self.model_name = model_name
         self.bounding_box_of_all_obj = bounding_box_of_all_obj
 
-    def __str__(self) -> str:
-        return f"Object: {self.name}, Detected: {self.is_detected}, Probability: {self.get_probability()}"
+    def __repr__(self) -> str:
+        return f"Object: {self.name}, Detected: {self.is_detected}, Probability: {self.get_detected_probability()}"
 
     def get_detected_probability(self) -> float:
         if not self.is_detected:
