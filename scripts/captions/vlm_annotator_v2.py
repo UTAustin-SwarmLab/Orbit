@@ -23,7 +23,6 @@ from tqdm import tqdm
 from dataclasses import asdict
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-
 # Add parent directory to path to import dataloader
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -36,8 +35,8 @@ from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import view_points
 from pyquaternion import Quaternion
 
-from nuscenes_dataloader import NuScenesLidarSegmentationLoader, FrameData, ObjectProperties
-from scenegraph import SceneGraphBuilder, SceneGraphNode
+from scenegraph.nuscenes_dataloader import NuScenesLidarSegmentationLoader, FrameData, ObjectProperties
+from scenegraph.scenegraph import SceneGraphBuilder, SceneGraphNode
 
 
 class InstanceAnnotator:
@@ -183,6 +182,7 @@ class InstanceAnnotator:
             
         except Exception as e:
             # Return original image if drawing fails
+            print(f"Error drawing bounding box: {e}") 
             return image
     
     def collect_instance_data(
@@ -549,7 +549,7 @@ def main():
     parser.add_argument('--output', type=str, default='outputs/instance_annotations', help='Output directory')
     parser.add_argument('--vllm-api', type=str, default='http://localhost:8001/v1', help='vLLM server URL')
     parser.add_argument('--model', type=str, default='OpenGVLab/InternVL3_5-14B', help='VLM model name')
-    parser.add_argument('--scene-idx', type=int, default=0, help='Scene index to process')
+    parser.add_argument('--num-scenes', type=int, default=250, help='Number of scenes to process')
     parser.add_argument('--max-workers', type=int, default=10, help='Max parallel workers')
     parser.add_argument('--max-frames', type=int, default=8, help='Max frames per instance')
     
@@ -575,21 +575,26 @@ def main():
     
     try:
         # Get scene
-        scene_tokens = loader.get_scene_tokens()
-        if args.scene_idx >= len(scene_tokens):
-            print(f"Error: Scene index {args.scene_idx} out of range (0-{len(scene_tokens)-1})")
-            return
+        for i in tqdm(range(args.num_scenes), desc="Processing scenes"):
+            scene_tokens = loader.get_scene_tokens()
+            print(f"Processing scene {i} of {args.num_scenes}")
+            if i >= len(scene_tokens):
+                print(f"Error: Scene index {i} out of range (0-{len(scene_tokens)-1})")
+                return
+            
+            scene_token = scene_tokens[i]
+            
+            # Annotate scene
+            results = annotator.annotate_scene(
+                scene_token=scene_token,
+                output_dir=args.output
+            )
+            
+            print("\n✓ Annotation complete!")
         
-        scene_token = scene_tokens[args.scene_idx]
-        
-        # Annotate scene
-        results = annotator.annotate_scene(
-            scene_token=scene_token,
-            output_dir=args.output
-        )
-        
-        print("\n✓ Annotation complete!")
-    
+    except Exception as e:
+        print(f"Error: {e}")
+        return
     finally:
         print("\nCleaning up...")
         annotator.cleanup()
